@@ -23,9 +23,26 @@ function broadcast(message: string): void {
     }
 }
 
+
 for (const device of devices) {
     device.start((update) => {
-        broadcast(JSON.stringify(update));
+        const message = JSON.stringify(update);
+
+        if (Math.random() < 0.1) {
+            const delay = 500 + Math.random() * 1500;
+
+            // console.log(
+            //     `[DELAYED] ${update.deviceId} seq=${update.sequence} delay=${Math.round(delay)}ms`,
+            // );
+
+            setTimeout(() => {
+                broadcast(message);
+            }, delay);
+
+            return;
+        }
+
+        broadcast(message);
     });
 }
 

@@ -1,77 +1,75 @@
-import { useEffect, useReducer } from 'react';
-import type { DeviceState, DeviceUpdate } from '../types';
-
-const MAX_SENSOR_HISTORY = 30;
-
-type DeviceStateMap = Record<string, DeviceState>;
-
-type Action = {
-    type: 'device:update';
-    payload: DeviceUpdate;
-};
-
-function deviceReducer(
-    state: DeviceStateMap,
-    action: Action,
-): DeviceStateMap {
-    const update = action.payload;
-    const existing = state[update.deviceId];
-
-    if (existing && update.sequence <= existing.sequence) {
-        return state;
-    }
-
-    const previousHistory = existing?.sensorHistory ?? [];
-
-    return {
-        ...state,
-        [update.deviceId]: {
-            id: update.deviceId,
-            position: update.position,
-            sensor: update.sensor,
-            sequence: update.sequence,
-            lastSeen: Date.now(),
-            sensorHistory: [
-                ...previousHistory,
-                update.sensor,
-            ].slice(-MAX_SENSOR_HISTORY),
-        },
-    };
-}
+import { useEffect, useReducer, useState } from 'react';
+import type { DeviceUpdate } from '../types';
+import {
+    deviceReducer,
+    type DeviceStateMap,
+} from '../reducer/deviceReducer';
 
 export function useDeviceStream(): DeviceStateMap {
     const [devices, dispatch] = useReducer(deviceReducer, {});
+    const [, setNow] = useState(Date.now());
 
     useEffect(() => {
-        const ws = new WebSocket('ws://localhost:8080');
+        const timer = setInterval(() => {
+            setNow(Date.now());
+        }, 500)
+        return () => {
+            clearInterval(timer);
+        }
+    }, []);
 
-        ws.onopen = () => {
-            console.log('Connected to WebSocket server');
-        };
+    useEffect(() => {
+        let ws: WebSocket | null = null;
+        let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+        let isUnmounted = false;
 
-        ws.onmessage = (event) => {
-            const update: DeviceUpdate = JSON.parse(event.data);
-
-            if (update.type !== 'device:update') {
+        const connect = () => {
+            if (isUnmounted) {
                 return;
             }
 
-            dispatch({
-                type: 'device:update',
-                payload: update,
-            });
+            ws = new WebSocket('ws://localhost:8080');
+
+            ws.onopen = () => {
+                console.log('Connected to WebSocket server');
+            };
+
+            ws.onmessage = (event) => {
+                const update: DeviceUpdate = JSON.parse(event.data);
+
+                if (update.type !== 'device:update') {
+                    return;
+                }
+
+                dispatch({
+                    type: 'device:update',
+                    payload: update,
+                });
+            };
+
+            ws.onclose = () => {
+                console.log('Disconnected from WebSocket server');
+
+                if (!isUnmounted) {
+                    reconnectTimer = setTimeout(connect, 1000);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
         };
 
-        ws.onclose = () => {
-            console.log('Disconnected from WebSocket server');
-        };
-
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
+        connect();
 
         return () => {
-            ws.close();
+            isUnmounted = true;
+
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+            }
+
+            ws?.close();
         };
     }, []);
 
